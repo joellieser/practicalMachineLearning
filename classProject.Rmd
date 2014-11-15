@@ -1,0 +1,87 @@
+##Introduction
+
+Project explanation taken from Practical Machine Learning course pages at www.coursera.com:
+
+"
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+The goal of your project is to predict the manner in which they did the exercise. 
+This is the "classe" variable in the training set. You may use any of the other variables to predict with. 
+You should create a report describing how you built your model, how you used cross validation, 
+what you think the expected out of sample error is, and why you made the choices you did. 
+You will also use your prediction model to predict 20 different test cases. 
+"
+
+We'll begin the exercise by loading the caret packages, setting a seed for reproducability and reading in the test and training data sets.
+```{r}
+library(caret)
+set.seed(26)
+trainingRaw <- read.csv("~/Desktop/classProject/pml-training.csv",header=TRUE, na.strings=c("NA","#DIV/0!",""))
+testingRaw  <- read.csv("~/Desktop/classProject/pml-testing.csv",header=TRUE, na.strings=c("NA","#DIV/0!",""))
+```
+Next, we'll do some general data prep work, including getting rid of some NA values and removing some columns that aren't expected to help with the predictive model (rownum,user_name,raw_timestamp_part_1,raw_timestamp_part_2,cvtd_timestamp,new_window,num_window)
+```{r}
+trainingCleaned<-trainingRaw[,colSums(is.na(trainingRaw)) == 0]
+skinnyTraining <- trainingCleaned[,-c(1:7)]
+NAs <- apply(skinnyTraining, 2, function(ip) {sum(is.na(ip))})
+trainingNoNA <- skinnyTraining[, which(NAs == 0)]
+```
+##Cross Validation
+For the sake of cross validation, we split the training data into a training set and a testing set.  We'll apply the models against the 70% training subset and validate the results of those models against a 30% subset of the data.
+
+##Out of Sample Error 
+The out of sample error is the value one minus the accuracy by which we correctly classify the classe variable on the testing (sub) sample from the training data set.
+```{r}
+inTrain <- createDataPartition(y=trainingNoNA$classe, p=0.7, list=FALSE)
+training <- trainingNoNA[inTrain, ] 
+testing <- trainingNoNA[-inTrain, ]
+```
+Since the variable being predicted is a factor, it's likely that a random forest will be a solid choice for the type of predictive model to apply, but since we don't know for sure right off the bat which model type to use, we'll try a few out, including stacking them together.
+```{r, cache=TRUE}
+rfTrain  <- train(classe~.,method="rf",data=training,trControl=trainControl(method="cv"),number=3)
+gbmTrain <- train(classe~.,method="gbm",data=training,verbose=FALSE)
+ldaTrain <- train(classe~.,method="lda",data=training)
+rpartTrain <- train(classe~.,method="rpart",data=training)
+
+rfPredict <- predict(rfTrain,newdata=testing)
+gbmPredict <- predict(gbmTrain,newdata=testing)
+ldaPredict <- predict(ldaTrain,newdata=testing)
+rpartPredict <- predict(rpartTrain,newdata=testing)
+
+combinedDF <- data.frame(rfPredict,gbmPredict,ldaPredict,rpartPredict,classe=testing$classe)
+combinedTrain <- train(classe~.,method="rf",data=combinedDF,trControl=trainControl(method="cv"),number=3)
+combinedPredict <- predict(combinedTrain,newdata=testing)
+```
+We'll use overall accuracy as our determiner of the cross validation results and print out the (overal accuracy) results of each confusion matrix below.
+```{r, cache=TRUE}
+rfCM <- confusionMatrix(rfPredict, testing$classe)
+gbmCM <- confusionMatrix(gbmPredict, testing$classe)
+ldaCM <- confusionMatrix(ldaPredict, testing$classe)
+rpartCM <- confusionMatrix(rpartPredict, testing$classe)
+combinedCM <- confusionMatrix(combinedPredict, testing$classe)
+print(paste(rfCM$overall[1], gbmCM$overall[1], ldaCM$overall[1], rpartCM$overall[1], combinedCM$overall[1]))
+```
+It turns out that the stacked models produces a result only equal to that of the random forest, so we'll examine the full confusion matrix for the random forest.
+```{r}
+rfCM
+```
+##Conclusion
+
+A Random Forest model will be used against the full training set, based on the fact that it's showing an overall accuracy rate of ~99.4% against the cross validation test set and a 95% confidence interval of(0.9917, 0.9959), making the out-of-sample error .6%.  Based on the confidence interval described previously, it is within reason to expect over 99% accuracy when applied to the complete testing data set. 
+
+The code below will apply the random forest against the full testing data set.
+```{r}
+finalPredict <- predict(rfTrain,newdata=testingRaw)
+```
+For submission of results, the following code is used:
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+setwd('~/Desktop/classProject')
+pml_write_files(finalPredict)
+```
